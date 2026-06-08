@@ -22,8 +22,10 @@ function getValidatedAdminEnv(): { url: string; serviceRoleKey: string } | null 
   if (
     !url ||
     url.includes("placeholder") ||
+    url.includes("your-project-ref") ||
     !serviceRoleKey ||
-    serviceRoleKey.includes("placeholder")
+    serviceRoleKey.includes("placeholder") ||
+    serviceRoleKey.includes("your_supabase_service_role_key")
   ) {
     return null;
   }

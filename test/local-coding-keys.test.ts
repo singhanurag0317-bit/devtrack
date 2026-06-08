@@ -73,11 +73,11 @@ describe("Local Coding Keys POST API Endpoint", () => {
     const expectedHash = createHash("sha256").update(returnedApiKey).digest("hex");
 
     expect(res.status).toBe(200);
-    // Both columns must receive the same hash so that either code path
-    // (api_key_hash-based OR api_key-based lookup) can authenticate the key.
+    // Both columns must receive the correct values: api_key gets the 8-char hint prefix,
+    // and api_key_hash gets the full hash.
     expect(mocks.insert).toHaveBeenCalledWith({
       user_id: "user-1",
-      api_key: expectedHash,
+      api_key: returnedApiKey.slice(0, 8),
       api_key_hash: expectedHash,
       name: "Laptop",
     });

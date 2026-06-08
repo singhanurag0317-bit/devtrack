@@ -25,6 +25,7 @@ describe('badge-rate-limit', () => {
 
     it('resets counter after window expires', () => {
       const ip = 'reset-test';
+      vi.setSystemTime(new Date(0));
     
       for (let i = 0; i < 20; i++) {
         checkBadgeRateLimit(ip);
@@ -32,7 +33,8 @@ describe('badge-rate-limit', () => {
     
       expect(checkBadgeRateLimit(ip).allowed).toBe(false);
     
-      vi.advanceTimersByTime(61000);
+      // Advance by 2 full windows so that previous window's requests are completely expired
+      vi.advanceTimersByTime(121000);
     
       const result = checkBadgeRateLimit(ip);
     

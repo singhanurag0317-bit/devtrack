@@ -36,7 +36,6 @@ export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ username: string }> }
 ): Promise<NextResponse> {
-  cleanOldEntries(ipRateLimits);
   const { username } = await params;
 
   // Validate username before touching any downstream service.

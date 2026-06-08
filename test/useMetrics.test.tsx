@@ -56,9 +56,8 @@ describe("useMetrics", () => {
 
     const { result } = renderHook(() => useMetrics());
 
-    await act(async () => {
-      await result.current.refetch();
-    });
+    // Wait for the initial mount fetch to complete
+    await act(async () => {});
     expect(result.current.data).toEqual({ v: 1 });
 
     await act(async () => {

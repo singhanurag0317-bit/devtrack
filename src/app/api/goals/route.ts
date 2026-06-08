@@ -4,6 +4,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { resolveAppUser } from "@/lib/resolve-user";
 import { dispatchToAllWebhooks } from "@/lib/webhooks";
 import { stripHtml } from "@/lib/sanitize";
+import { extractValidRepoFromGoal } from "@/lib/goals-sync-utils";
 
 export const dynamic = "force-dynamic";
 
@@ -14,6 +15,7 @@ interface Goal {
   target: number;
   current: number;
   unit: string;
+  type: string;
   recurrence: string;
   deadline: string | null;
   period_start: string | null;
@@ -62,12 +64,117 @@ function getPreviousPeriodEnd(periodStart: Date): string {
   return new Date(periodStart.getTime() - 1).toISOString();
 }
 
+function currentWeekStart(): string {
+  const now = new Date();
+  const day = now.getUTCDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  const monday = new Date(now);
+  monday.setUTCDate(now.getUTCDate() + diff);
+  monday.setUTCHours(0, 0, 0, 0);
+  return monday.toISOString();
+}
+
+function currentWeekEnd(): string {
+  const now = new Date();
+  const day = now.getUTCDay();
+  const diff = day === 0 ? 0 : 7 - day;
+  const sunday = new Date(now);
+  sunday.setUTCDate(now.getUTCDate() + diff);
+  sunday.setUTCHours(23, 59, 59, 999);
+  return sunday.toISOString();
+}
+
+const GITHUB_API = "https://api.github.com";
+
+async function fetchCommitsCount(
+  githubLogin: string,
+  accessToken: string,
+  weekStart: string,
+  weekEnd: string,
+  repo: string | null
+): Promise<number> {
+  let page = 1;
+  let commitCount = 0;
+  let hasMore = true;
+
+  while (hasMore) {
+    const qParts = [`author:${githubLogin}`];
+    if (repo) qParts.push(`repo:${repo}`);
+    qParts.push(`author-date:${weekStart}..${weekEnd}`);
+
+    const commitSearchParams = new URLSearchParams({
+      q: qParts.join(" "),
+      per_page: "100",
+      page: String(page),
+    });
+
+    const ghRes = await fetch(
+      `${GITHUB_API}/search/commits?${commitSearchParams.toString()}`,
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: "application/vnd.github+json",
+        },
+        cache: "no-store",
+      }
+    );
+
+    if (!ghRes.ok) {
+      throw new Error(`GitHub API error: ${ghRes.status}`);
+    }
+
+    const ghData = (await ghRes.json()) as {
+      items?: unknown[];
+    };
+
+    const items = ghData.items || [];
+    commitCount += items.length;
+
+    if (items.length < 100) {
+      hasMore = false;
+    } else {
+      page++;
+    }
+  }
+
+  return commitCount;
+}
+
+async function fetchPRsCount(
+  githubLogin: string,
+  accessToken: string,
+  weekStart: string,
+  weekEnd: string
+): Promise<number> {
+  const prSearchParams = new URLSearchParams({
+    q: `author:${githubLogin} type:pr is:merged merged:${weekStart}..${weekEnd}`,
+    per_page: "1",
+  });
+
+  const prRes = await fetch(
+    `${GITHUB_API}/search/issues?${prSearchParams.toString()}`,
+    {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: "application/vnd.github+json",
+      },
+      cache: "no-store",
+    }
+  );
+
+  if (!prRes.ok) {
+    throw new Error(`GitHub API error: ${prRes.status}`);
+  }
+
+  const prData = (await prRes.json()) as { total_count?: number };
+  return prData.total_count || 0;
+}
+
 export async function GET() {
   const session = await getServerSession(authOptions);
   if (!session?.githubId) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
-
 
   const user = await resolveAppUser(session.githubId, session.githubLogin);
   if (!user) return Response.json({ error: "User not found" }, { status: 404 });
@@ -88,68 +195,143 @@ export async function GET() {
   // Reset progress if we're in a new period
   const processedGoals = await Promise.all(
     (goals ?? []).map(async (goal: Goal) => {
-      if (goal.recurrence === "none") return goal;
+      let currentGoal = { ...goal };
 
-      const periodStart = new Date(getPeriodStart(goal.recurrence as Recurrence));
-      const storedPeriodStart = goal.period_start
-        ? new Date(goal.period_start)
-        : new Date(0);
+      if (currentGoal.recurrence !== "none") {
+        const periodStart = new Date(getPeriodStart(currentGoal.recurrence as Recurrence));
+        const storedPeriodStart = currentGoal.period_start
+          ? new Date(currentGoal.period_start)
+          : new Date(0);
 
-      if (storedPeriodStart < periodStart) {
-        const oldVersion = goal.goal_reset_version ?? 0;
+        if (storedPeriodStart < periodStart) {
+          let achieved = currentGoal.current;
 
-        const { error: historyError } = await supabaseAdmin
-          .from("goal_history")
-          .insert({
-            goal_id: goal.id,
-            user_id: goal.user_id,
-            period_start: storedPeriodStart.toISOString(),
-            period_end: getPreviousPeriodEnd(periodStart),
-            target: goal.target,
-            achieved: goal.current,
-            completed: goal.current >= goal.target,
-          });
+          if (session?.accessToken && session.githubLogin) {
+            const prevStart = storedPeriodStart.toISOString();
+            const prevEnd = getPreviousPeriodEnd(periodStart);
+            if (currentGoal.type === "commits") {
+              try {
+                const repo = extractValidRepoFromGoal(currentGoal as any);
+                achieved = await fetchCommitsCount(
+                  session.githubLogin,
+                  session.accessToken,
+                  prevStart,
+                  prevEnd,
+                  repo
+                );
+              } catch (e) {
+                console.error("Failed to fetch previous period commits", e);
+              }
+            } else if (currentGoal.type === "prs") {
+              try {
+                achieved = await fetchPRsCount(
+                  session.githubLogin,
+                  session.accessToken,
+                  prevStart,
+                  prevEnd
+                );
+              } catch (e) {
+                console.error("Failed to fetch previous period PRs", e);
+              }
+            }
+          }
+
+          const oldVersion = currentGoal.goal_reset_version ?? 0;
+
+          const { error: historyError } = await supabaseAdmin
+            .from("goal_history")
+            .insert({
+              goal_id: currentGoal.id,
+              user_id: currentGoal.user_id,
+              period_start: storedPeriodStart.toISOString(),
+              period_end: getPreviousPeriodEnd(periodStart),
+              target: currentGoal.target,
+              achieved: achieved,
+              completed: achieved >= currentGoal.target,
+            });
+          
+          if (historyError && historyError.code !== "23505") {
+            console.error("Failed to persist goal history before reset:", historyError);
+            return currentGoal;
+          }
+          
+          const { data: updated, error } = await supabaseAdmin
+            .from("goals")
+            .update({
+              current: 0,
+              period_start: periodStart.toISOString(),
+              goal_reset_version: oldVersion + 1,
+            })
+            .eq("id", currentGoal.id)
+            .eq("goal_reset_version", oldVersion)
+            .or(`period_start.lt.${periodStart.toISOString()},period_start.is.null`)
+            .select()
+            .single();
         
-        if (historyError && historyError.code !== "23505") {
-          console.error("Failed to persist goal history before reset:", historyError);
-          return goal;
+          if (updated) {
+            currentGoal = updated;
+          } else {
+            if (error) {
+              console.warn("[GOAL_RESET_CONFLICT]", {
+                goalId: currentGoal.id,
+                oldVersion,
+                error,
+              });
+            }
+            const { data: current } = await supabaseAdmin
+              .from("goals")
+              .select("*")
+              .eq("id", currentGoal.id)
+              .single();
+            if (current) currentGoal = current;
+          }
         }
-        
-        const { data: updated, error } = await supabaseAdmin
-          .from("goals")
-          .update({
-            current: 0,
-            period_start: periodStart.toISOString(),
-            goal_reset_version: oldVersion + 1,
-          })
-          .eq("id", goal.id)
-          .eq("goal_reset_version", oldVersion)
-          .or(`period_start.lt.${periodStart.toISOString()},period_start.is.null`)
-          .select()
-          .single();
-      
-        if (updated) {
-          return updated;
-        }
-      
-        if (error) {
-          console.warn("[GOAL_RESET_CONFLICT]", {
-            goalId: goal.id,
-            oldVersion,
-            error,
-          });
-        }
-      
-        const { data: current } = await supabaseAdmin
-          .from("goals")
-          .select("*")
-          .eq("id", goal.id)
-          .single();
-      
-        return current ?? goal;
       }
 
-      return goal;
+      // Fetch dynamic value for current period if it is an auto-progress goal type
+      if (session?.accessToken && session.githubLogin) {
+        if (currentGoal.type === "commits") {
+          try {
+            const repo = extractValidRepoFromGoal(currentGoal as any);
+            const weekStart = currentGoal.period_start || currentWeekStart();
+            const weekEnd = currentWeekEnd();
+            const count = await fetchCommitsCount(
+              session.githubLogin,
+              session.accessToken,
+              weekStart,
+              weekEnd,
+              repo
+            );
+            await supabaseAdmin
+              .from("goals")
+              .update({ current: count, last_synced_at: new Date().toISOString() })
+              .eq("id", currentGoal.id);
+            currentGoal.current = count;
+          } catch (e) {
+            console.error("Failed to dynamically fetch commits for goal", currentGoal.id, e);
+          }
+        } else if (currentGoal.type === "prs") {
+          try {
+            const weekStart = currentGoal.period_start || currentWeekStart();
+            const weekEnd = currentWeekEnd();
+            const count = await fetchPRsCount(
+              session.githubLogin,
+              session.accessToken,
+              weekStart,
+              weekEnd
+            );
+            await supabaseAdmin
+              .from("goals")
+              .update({ current: count, last_synced_at: new Date().toISOString() })
+              .eq("id", currentGoal.id);
+            currentGoal.current = count;
+          } catch (e) {
+            console.error("Failed to dynamically fetch PRs for goal", currentGoal.id, e);
+          }
+        }
+      }
+
+      return currentGoal;
     })
   );
 
@@ -201,7 +383,7 @@ try {
     return Response.json({ error: "Invalid request body" }, { status: 400 });
   }
 
-  const { title, target, unit, recurrence, deadline } = body as Record<string, unknown>;
+  const { title, target, unit, recurrence, deadline, type } = body as Record<string, unknown>;
 
   if (typeof title !== "string" || title.trim().length === 0) {
     return Response.json({ error: "title must be a non-empty string" }, { status: 400 });
@@ -229,6 +411,9 @@ try {
   const safeRecurrence: Recurrence = VALID_RECURRENCES.includes(recurrence as Recurrence)
     ? (recurrence as Recurrence)
     : "none";
+
+  const VALID_TYPES = ["commits", "prs", "manual"] as const;
+  const safeType = VALID_TYPES.includes(type as any) ? (type as string) : "manual";
 
   let safeDeadline: string | null = null;
   if (typeof deadline === "string") {
@@ -266,6 +451,7 @@ try {
       title: sanitizedTitle,
       target,
       unit: safeUnit,
+      type: safeType,
       recurrence: safeRecurrence,
       period_start: getPeriodStart(safeRecurrence),
       deadline: safeDeadline,

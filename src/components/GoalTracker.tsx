@@ -14,6 +14,7 @@ interface Goal {
   target: number;
   current: number;
   unit: string;
+  type?: "commits" | "prs" | "manual";
   recurrence: Recurrence;
   deadline: string | null;
   is_public: boolean;
@@ -44,6 +45,7 @@ export function useGoalTracker() {
   const [title, setTitle] = useState("");
   const [target, setTarget] = useState(7);
   const [unit, setUnit] = useState("commits");
+  const [type, setType] = useState("manual");
   const [recurrence, setRecurrence] = useState<Recurrence>("none");
   const [deadline, setDeadline] = useState("");
   const [creating, setCreating] = useState(false);
@@ -143,7 +145,7 @@ export function useGoalTracker() {
 
     try {
       const result = await submitGoalWithRefresh({
-        payload: { title, target, unit, recurrence, deadline: deadline || null },
+        payload: { title, target, unit, recurrence, deadline: deadline || null, type },
         handleSync,
         loadGoals,
       });
@@ -156,11 +158,12 @@ export function useGoalTracker() {
       setTitle("");
       setTarget(7);
       setUnit("commits");
+      setType("manual");
       setRecurrence("none");
       setDeadline("");
 
       // Immediately sync if it was a commit-based goal or prs
-      if (unit === "commits" || unit === "prs") {
+      if (unit === "commits" || unit === "prs" || type === "commits" || type === "prs") {
         await handleSync();
       } else {
         await loadGoals().catch(() => { });
@@ -270,6 +273,8 @@ export function useGoalTracker() {
     setRecurrence,
     deadline,
     setDeadline,
+    type,
+    setType,
     creating,
     createError,
     confirmingId,
@@ -305,6 +310,8 @@ export default function GoalTracker() {
     setRecurrence,
     deadline,
     setDeadline,
+    type,
+    setType,
     creating,
     createError,
     confirmingId,
@@ -492,6 +499,17 @@ export default function GoalTracker() {
                   <div className="flex flex-col gap-0.5">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-[var(--card-foreground)]">{goal.title}</span>
+                      {goal.type && (
+                        <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded border ${
+                          goal.type === "commits"
+                            ? "bg-indigo-500/10 text-indigo-400 border-indigo-500/20"
+                            : goal.type === "prs"
+                            ? "bg-purple-500/10 text-purple-400 border-purple-500/20"
+                            : "bg-gray-500/10 text-gray-400 border-gray-500/20"
+                        }`}>
+                          {goal.type}
+                        </span>
+                      )}
                       {goal.recurrence !== "none" && (
                         <span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${
                           goal.recurrence === "weekly"
@@ -705,6 +723,22 @@ export default function GoalTracker() {
               <option value="milestones">Milestones</option>
               <option value="hours">Hours</option>
               <option value="streak">Streak (days)</option>
+            </select>
+          </div>
+          <div className="flex-1">
+            <label htmlFor="goal-type" className="mb-1 block text-xs font-medium uppercase tracking-wide text-[var(--muted-foreground)]">
+              Type
+            </label>
+            <select
+              id="goal-type"
+              value={type}
+              onChange={(e) => setType(e.target.value)}
+              disabled={creating}
+              className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-sm text-[var(--foreground)] transition focus-visible:border-[var(--accent)]"
+            >
+              <option value="manual">Manual Progress</option>
+              <option value="commits">GitHub Commits Auto</option>
+              <option value="prs">GitHub PRs Auto</option>
             </select>
           </div>
         </div>

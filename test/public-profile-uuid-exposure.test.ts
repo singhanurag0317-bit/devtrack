@@ -16,14 +16,28 @@ const mocks = vi.hoisted(() => ({
 
 // The first describe block tests the library function directly, so it needs
 // the real implementation with mocked dependencies.
-vi.mock("@/lib/supabase", () => ({
-  getUserByUsername: mocks.getUserByUsername,
-  supabaseAdmin: { from: vi.fn() },
-  isSupabaseAdminAvailable: true,
-  SUPABASE_ADMIN_UNAVAILABLE_MESSAGE: "",
-  getUserByGithubId: vi.fn(),
-  updateUserPublicFlag: vi.fn(),
-}));
+vi.mock("@/lib/supabase", () => {
+  const fromChain = {
+    select: vi.fn().mockReturnThis(),
+    eq: vi.fn().mockReturnThis(),
+    order: vi.fn().mockReturnThis(),
+    limit: vi.fn().mockReturnThis(),
+    single: vi.fn().mockReturnThis(),
+    then: vi.fn().mockImplementation((onFulfilled) =>
+      Promise.resolve(onFulfilled({ data: [], error: null }))
+    ),
+  };
+  return {
+    getUserByUsername: mocks.getUserByUsername,
+    supabaseAdmin: {
+      from: vi.fn().mockReturnValue(fromChain),
+    },
+    isSupabaseAdminAvailable: true,
+    SUPABASE_ADMIN_UNAVAILABLE_MESSAGE: "",
+    getUserByGithubId: vi.fn(),
+    updateUserPublicFlag: vi.fn(),
+  };
+});
 
 vi.mock("@/lib/github-achievements", () => ({
   syncGitHubAchievementsForUser: mocks.syncGitHubAchievementsForUser,

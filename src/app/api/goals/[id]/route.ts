@@ -43,7 +43,7 @@ export async function PATCH(
 
   const updates: Record<string, unknown> = {};
 
-  const { title, target, unit, recurrence, current, is_public } =
+  const { title, target, unit, recurrence, current, is_public, type } =
     body as Record<string, unknown>;
 
   if (title !== undefined) {
@@ -109,6 +109,17 @@ export async function PATCH(
     updates.is_public = is_public;
   } 
 
+  if (type !== undefined) {
+    const VALID_TYPES = ["commits", "prs", "manual"] as const;
+    if (!VALID_TYPES.includes(type as any)) {
+      return Response.json(
+        { error: "type must be 'commits', 'prs', or 'manual'" },
+        { status: 400 }
+      );
+    }
+    updates.type = type;
+  }
+
   const { data: existingGoal } = await supabaseAdmin
     .from("goals")
     .select("*")
@@ -127,7 +138,12 @@ export async function PATCH(
   // Block manual progress edits for activity-derived goal types.
   // These goals are synced from GitHub and setting current directly would
   // allow goal completion without any corresponding real activity.
-  if (current !== undefined && ACTIVITY_DERIVED_UNITS.has(existingGoal.unit)) {
+  if (
+    current !== undefined &&
+    (existingGoal.type === "commits" ||
+      existingGoal.type === "prs" ||
+      ACTIVITY_DERIVED_UNITS.has(existingGoal.unit))
+  ) {
     return Response.json(
       {
         error:

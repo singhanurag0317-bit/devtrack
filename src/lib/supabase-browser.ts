@@ -12,7 +12,14 @@ function getValidatedBrowserEnv(): { url: string; anonKey: string } | null {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-  if (!url || url.includes("placeholder") || !anonKey || anonKey.includes("placeholder")) {
+  if (
+    !url ||
+    url.includes("placeholder") ||
+    url.includes("your-project-ref") ||
+    !anonKey ||
+    anonKey.includes("placeholder") ||
+    anonKey.includes("your_supabase_anon_key")
+  ) {
     return null;
   }
 

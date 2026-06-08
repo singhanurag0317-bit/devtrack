@@ -258,4 +258,42 @@ describe("PATCH /api/goals/[id] — progress integrity", () => {
     await PATCH(req, ctx);
     expect(mocks.dispatchToAllWebhooks).not.toHaveBeenCalled();
   });
+
+  it("rejects invalid type values with 400", async () => {
+    setupSupabase(buildGoal());
+    const [req, ctx] = makeRequest({ type: "invalid" });
+    const res = await PATCH(req, ctx);
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/type must be/);
+  });
+
+  it("allows setting type to commits, prs, or manual", async () => {
+    const goal = buildGoal({ unit: "hours", target: 8, current: 0, type: "manual" });
+    const updated = { ...goal, type: "commits" };
+    setupSupabase(goal, updated);
+    const [req, ctx] = makeRequest({ type: "commits" });
+    const res = await PATCH(req, ctx);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.goal.type).toBe("commits");
+  });
+
+  it("rejects progress update for a goal with type commits", async () => {
+    setupSupabase(buildGoal({ type: "commits", current: 0, target: 10 }));
+    const [req, ctx] = makeRequest({ current: 5 });
+    const res = await PATCH(req, ctx);
+    expect(res.status).toBe(422);
+    const body = await res.json();
+    expect(body.error).toMatch(/GitHub sync/);
+  });
+
+  it("rejects progress update for a goal with type prs", async () => {
+    setupSupabase(buildGoal({ type: "prs", current: 0, target: 10 }));
+    const [req, ctx] = makeRequest({ current: 5 });
+    const res = await PATCH(req, ctx);
+    expect(res.status).toBe(422);
+    const body = await res.json();
+    expect(body.error).toMatch(/GitHub sync/);
+  });
 });

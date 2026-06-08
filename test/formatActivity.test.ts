@@ -128,7 +128,7 @@ describe('formatActivity', () => {
   it('returns null for unknown event type', () => {
     const event = {
       ...baseEvent,
-      type: 'WatchEvent',
+      type: 'DeleteEvent',
     };
     expect(formatActivity(event as any)).toBeNull();
   });

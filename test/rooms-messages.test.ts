@@ -23,7 +23,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("next-auth", () => ({ getServerSession: mocks.getServerSession }));
 vi.mock("@/lib/auth", () => ({ authOptions: {} }));
-vi.mock("@/lib/supabase", () => ({
+vi.mock("@/lib/supabase-rooms", () => ({
   getRoomById: mocks.getRoomById,
   getRoomMessages: mocks.getRoomMessages,
   sendRoomMessage: mocks.sendRoomMessage,
